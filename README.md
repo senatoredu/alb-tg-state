@@ -2,9 +2,10 @@
 
 Application Load Balancer Target Health Recorder whose function is to record the target health unhealthy reason when a target goes unhealthy.
 ALB in its current form only notifies when an unhealthy host count is recorded (>0) via Cloudwatch alarms, but it has no way of representating the current
-state of the targets at the time of the alarm, i.e it tells you something went wrong (unhealthyhost), but doesn't tell you which host went unhealthy.
+state of the targets at the time of the alarm, i.e it tells you something went wrong (unhealthyhost), but doesn't tell you which host went unhealthy and why, this code addresses that.
 
-This program is built to persist that information (i.e when the alarm fired what targets where unhealthy and why).
+
+This program is built to persist the target unhealthy information (i.e when the alarm fired what targets where unhealthy and why).
 
 Architecture leverages 4 aws services:
 
