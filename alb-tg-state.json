@@ -1,0 +1,255 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS CloudFormation Template that outputs the state of backend ALB Target Health Check and Reason codes to a DynamoDatabase Table",
+  "Parameters": {
+    "CloudwatchAlarm": {
+      "Description": "Please enter the Name of the Cloudwatch Alarm that you would like to use that alarms when unhealthyhost goes above 0, this will get created by Cloudformation",
+      "Type": "String"
+    },
+    "SnsTopicName": {
+      "Description": "Please enter the Name of the SNS Topic that you would like to use that triggers the lambda function, this will get created by Cloudformation",
+      "Type": "String"
+    },
+    "DdbTable": {
+      "Description": "Please enter the Name of the DynamoDBTable you will like to use that will store the Healthcheck output, this will get created by Cloudformation",
+      "Type": "String"
+    },
+    "LambdaHC": {
+      "Description": "Please enter the Name of the Lambda Function you will like to use that gets invoked and puts the health checkout to DynamoDB, this will get created by Cloudformation",
+      "Type": "String"
+    },
+    "ALBTG": {
+      "Description": "Please enter the Name of the ALB Target Group's ARN that you would like to monitor, please enter a name with the below format: targetgroup/tg/123abc45679000, you can derive this synatx from the Target Group's ARN",
+      "Type": "String"
+    },
+    "ALBTGARN": {
+      "Description": "Please enter the full ARN of the Target Group's ARN, format should look like: arn:aws:elasticloadbalancing:eu-west-1:123456789:targetgroup/tg-name/123456ddass",
+      "Type": "String"
+    },
+    "ALBNAME": {
+      "Description": "Please enter the Name of the ALB that you would like to monitor, please enter a name with the below format: app/albname/0123456abc789, you can derive this synatx from the ALB's ARN",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "CloudwatchUHAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "ActionsEnabled": true,
+        "AlarmActions": [
+          {
+            "Ref": "SnsTopic"
+          }
+        ],
+        "AlarmName": {
+          "Ref": "CloudwatchAlarm"
+        },
+        "ComparisonOperator": "GreaterThanThreshold",
+        "DatapointsToAlarm": 1,
+        "Dimensions": [
+          {
+            "Name": "TargetGroup",
+            "Value": {
+              "Ref": "ALBTG"
+            }
+          },
+          {
+            "Name": "LoadBalancer",
+            "Value": {
+              "Ref": "ALBNAME"
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "InsufficientDataActions": [],
+        "MetricName": "UnHealthyHostCount",
+        "Namespace": "AWS/ApplicationELB",
+        "OKActions": [],
+        "Period": 60,
+        "Statistic": "Average",
+        "Threshold": 0,
+        "TreatMissingData": "missing"
+      }
+    },
+    "SnsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": {
+          "Ref": "SnsTopicName"
+        },
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Fn::GetAtt": [
+                "HCLambda",
+                "Arn"
+              ]
+            },
+            "Protocol": "lambda"
+          }
+        ]
+      },
+      "DependsOn": [
+        "HCLambda"
+      ]
+    },
+    "DYNAMODBTABLE": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "Timestamp",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "Timestamp",
+            "KeyType": "HASH"
+          }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 5,
+          "WriteCapacityUnits": 5
+        },
+        "TableName": {
+          "Ref": "DdbTable"
+        }
+      }
+    },
+    "HCLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecuteIAMRole",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "LambdaHC"
+        },
+        "Handler": "index.lambda_handler",
+        "Environment": {
+          "Variables": {
+            "TGARNPythonEnv": {
+              "Ref": "ALBTGARN"
+            },
+            "DDBPythonEnv": {
+              "Ref": "DdbTable"
+            }
+          }
+        },
+        "Runtime": "python3.7",
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "\n",
+              [
+                "import boto3",
+                "import datetime",
+                "import os",
+                "def lambda_handler(event, context):",
+                "    dynamodb = boto3.client('dynamodb')",
+                "    alb = boto3.client('elbv2')",
+                "",
+                "    time = datetime.datetime.now()",
+                "    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')",
+                "",
+                "    #describe tg hc",
+                "    tg_hc_state = alb.describe_target_health(",
+                "    TargetGroupArn= os.environ['TGARNPythonEnv'])",
+                "",
+                "    tg_hc_state = str(tg_hc_state)",
+                "    #put describe tg hc into the ddb",
+                "",
+                "    response = dynamodb.put_item(",
+                "        Item={",
+                "            'Timestamp': {",
+                "                'S': timestamp,",
+                "             },",
+                "             'Health': {",
+                "                 'S': tg_hc_state,",
+                "             }",
+                "       },",
+                "       TableName= os.environ['DDBPythonEnv'],",
+                "   )"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "LambdaPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "HCLambda",
+            "Arn"
+          ]
+        },
+        "Principal": "sns.amazonaws.com",
+        "Action": "lambda:InvokeFunction",
+        "SourceArn": {
+          "Ref": "SnsTopic"
+        }
+      }
+    },
+    "LambdaExecuteIAMRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "IdentifyingUnheathyTargets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "LambdaLogs",
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "DDBWriteTable",
+                  "Action": [
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "ELB",
+                  "Action": [
+                    "elasticloadbalancing:Describe*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
