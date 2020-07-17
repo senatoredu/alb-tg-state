@@ -38,4 +38,6 @@ This code is suited for usecases where the target state of alb tg's are unstable
 
 #   alb-tg-state.json 
 
-This is a json file in the master branch that contains a Cloudformation template that couples the entire solution end-to-end, you can use this as a source json to feed into Cloudformation and all components of this solution will be built automatically, don't have to manually create the solution via Console.
+This is a json file in the master branch that contains a Cloudformation template that couples the entire solution end-to-end, you can use this as a source json to feed into Cloudformation and all components of this solution will be built automatically, don't have to manually create the solution via Console. 
+
+![alb-tg-state](https://github.com/senatoredu/alb-tg-state/alb-tg-state.png) 
